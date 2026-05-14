@@ -2,7 +2,7 @@
   "expo": {
     "name": "mobile-app",
     "slug": "mobile-app",
-    "version":"1.0.2",
+    "version":"1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,7 +15,7 @@
       "supportsTablet": true
     },
     "android": {
-       "versionCode": 8,
+       "versionCode": 9,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

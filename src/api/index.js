@@ -11,7 +11,7 @@ const api = axios.create({
 });
 
 export const getShops = async () => {
-  const response = await api.get('/shops');
+  const response = await api.get(`/shops?t=${Date.now()}`); // ← cache bust
   return response.data;
 };
 
@@ -54,5 +54,12 @@ export const getNotificationsByShop = async (shopId) => {
   const response = await api.get(`/notifications/shop/${shopId}`);
   return response.data;
 };
-
+export const updateShopAccess = async (id, { access_enabled, access_start_date, access_end_date }) => {
+  const response = await api.put(`/shops/${id}/access`, {
+    access_enabled,
+    access_start_date,
+    access_end_date,
+  });
+  return response.data;
+};
 export default api;

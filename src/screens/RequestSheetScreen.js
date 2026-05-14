@@ -7,21 +7,22 @@ import { useApp } from '../context/AppContext';
 import { APP_COLORS } from '../constants/data';
 import { submitRequest, getBrandsByCategory } from '../api/index';
 
+// ── 325ml removed from beer columns ──────────────────────────────────────────
 const getColumns = (categoryType) => {
-  if (categoryType === 'beer') return ['625ml', '500ml C', '330ml', '500ml B', '325ml'];
+  if (categoryType === 'beer') return ['625ml', '500ml C', '330ml', '500ml B'];
   return ['Q', 'P', 'N'];
 };
 
 // ── Layout config per category type ──────────────────────────────────────────
 const LAYOUT = {
   beer: {
-    fixedColWidth:     110,  // brand name column width
-    colWidth:           46,  // each input cell width
-    inputWidth:         44,  // TextInput width inside cell
-    inputHeight:        30,//text height
-    brandFontSize:      10,//rand name font size
-    headerMinHeight:    8,  // fixed header min height
-    subHeaderFontSize:   9,  // sub column header font size
+    fixedColWidth:     110,
+    colWidth:           46,
+    inputWidth:         44,
+    inputHeight:        30,
+    brandFontSize:      10,
+    headerMinHeight:    8,
+    subHeaderFontSize:   9,
   },
   qpn: {
     fixedColWidth:     140,
@@ -32,6 +33,54 @@ const LAYOUT = {
     headerMinHeight:    50,
     subHeaderFontSize:  10,
   },
+};
+
+// ── Beer column multiples: index matches getColumns('beer') ───────────────────
+// 0: 625ml Bottle → ×12
+// 1: 500ml Can    → ×24  (labelled '500ml C')
+// 2: 330ml Can    → ×24
+// 3: 500ml Bottle → ×12  (labelled '500ml B')
+const BEER_COLUMN_MULTIPLES = [12, 24, 24, 12];
+
+// ── QPN brand multiples ───────────────────────────────────────────────────────
+// Returns [Q_multiple, P_multiple, N_multiple] for a given brand name.
+// Brand name matching is case-insensitive and checks if the name includes the keyword.
+// UG special N×25 brands — exact match (case-insensitive)
+const UG_N25_BRANDS = [
+  'lemonark arrack',
+  'origin premium white arrack',
+  'appleark arrack',
+  'royal black arrack',
+];
+
+const getQPNMultiples = (brandName, categoryName) => {
+  const name = (brandName || '').toLowerCase().trim();
+  const cat  = (categoryName || '').toLowerCase();
+
+  if (cat.includes('dcsl')) {
+    return [12, 12, 12];
+  }
+  if (cat.includes('rockland') || cat.includes('idl')) {
+    return [12, 24, 25];
+  }
+  // UG (default QPN)
+  const isSpecialNBrand = UG_N25_BRANDS.includes(name);
+  return [12, 24, isSpecialNBrand ? 25 : 48];
+};
+
+// ── Validate that a value is a valid multiple ─────────────────────────────────
+const isValidMultiple = (value, multiple) => {
+  const num = parseInt(value, 10);
+  if (isNaN(num) || num === 0) return true; // empty / zero is allowed
+  return num % multiple === 0;
+};
+
+// ── Get the multiple for a specific cell ─────────────────────────────────────
+const getCellMultiple = (categoryType, colIdx, brandName, categoryName) => {
+  if (categoryType === 'beer') {
+    return BEER_COLUMN_MULTIPLES[colIdx] || 1;
+  }
+  return getQPNMultiples(brandName, categoryName)[colIdx] || 1;
 };
 
 export default function RequestSheetScreen({ route, navigation }) {
@@ -78,15 +127,50 @@ export default function RequestSheetScreen({ route, navigation }) {
     });
   }, []);
 
+  // ── Validate multiples on blur (request stock only) ─────────────────────
+  const handleBlurValidation = (brandIdx, colIdx, field, value) => {
+    if (field !== 'request') return; // only validate request stock
+    if (!value || value === '' || parseInt(value, 10) === 0) return;
+    const brandName = brands[brandIdx] || '';
+    const multiple = getCellMultiple(categoryType, colIdx, brandName, category.category_name || category.label || '');
+    if (!isValidMultiple(value, multiple)) {
+      Alert.alert(
+        'Invalid Quantity',
+        'Please enter the correct quantity.',
+      );
+      // Clear the invalid value
+      updateValue(brandIdx, colIdx, field, '');
+    }
+  };
+
+  // ── Submit: allow if any present OR request stock is entered ─────────────
   const handleSubmit = () => {
-    let hasQuantity = false;
+    // 1. Check all request stock values are valid multiples before submitting
+    for (let bi = 0; bi < stockData.length; bi++) {
+      for (let ci = 0; ci < columns.length; ci++) {
+        const val = stockData[bi][ci].request;
+        if (!val || val === '' || parseInt(val, 10) === 0) continue;
+        const brandName = brands[bi] || '';
+        const multiple = getCellMultiple(categoryType, ci, brandName, category.category_name || category.label || '');
+        if (!isValidMultiple(val, multiple)) {
+          Alert.alert('Invalid Quantity', 'Please enter the correct quantity.');
+          return;
+        }
+      }
+    }
+
+    // 2. Check at least one value is entered
+    let hasAnyValue = false;
     stockData.forEach((row) => {
       row.forEach((cell) => {
-        if (cell.request && parseInt(cell.request) > 0) hasQuantity = true;
+        if ((cell.present && parseInt(cell.present, 10) > 0) ||
+            (cell.request && parseInt(cell.request, 10) > 0)) {
+          hasAnyValue = true;
+        }
       });
     });
 
-    if (!hasQuantity) {
+    if (!hasAnyValue) {
       Alert.alert('Empty Request', 'Please enter at least one quantity before submitting.');
       return;
     }
@@ -106,32 +190,41 @@ export default function RequestSheetScreen({ route, navigation }) {
       setLoading(true);
 
       const items = brands.map((brand, bi) => {
-        const presentValues = columns.map((col, ci) => stockData[bi][ci].present || '0');
-        const requestValues = columns.map((col, ci) => stockData[bi][ci].request || '0');
+        // Always pad to 5 slots so the payload shape stays consistent with the backend
+        const pad = (arr) => Array.from({ length: 5 }, (_, i) => parseInt(arr[i]) || 0);
+        const presentValues = pad(columns.map((col, ci) => stockData[bi][ci].present || '0'));
+        const requestValues = pad(columns.map((col, ci) => stockData[bi][ci].request || '0'));
         return {
           brand_name: brand,
-          present_1: parseInt(presentValues[0]) || 0,
-          present_2: parseInt(presentValues[1]) || 0,
-          present_3: parseInt(presentValues[2]) || 0,
-          present_4: parseInt(presentValues[3]) || 0,
-          present_5: parseInt(presentValues[4]) || 0,
-          request_1: parseInt(requestValues[0]) || 0,
-          request_2: parseInt(requestValues[1]) || 0,
-          request_3: parseInt(requestValues[2]) || 0,
-          request_4: parseInt(requestValues[3]) || 0,
-          request_5: parseInt(requestValues[4]) || 0,
+          present_1: presentValues[0],
+          present_2: presentValues[1],
+          present_3: presentValues[2],
+          present_4: presentValues[3],
+          present_5: presentValues[4],
+          request_1: requestValues[0],
+          request_2: requestValues[1],
+          request_3: requestValues[2],
+          request_4: requestValues[3],
+          request_5: requestValues[4],
         };
       });
 
-      await submitRequest({ shop_id: shopId, category_id: category.id, items });
+      const payload = { shop_id: shopId, category_id: category.id, items };
+      await submitRequest(payload);
       navigation.navigate('RequestSuccess', { category });
     } catch (error) {
-      console.error('Submit error:', error);
-      if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
-        Alert.alert('No Internet', 'No internet connection, please try again.');
-      } else {
-        Alert.alert('Error', 'Failed to submit request. Please try again.');
-      }
+      console.warn('Submit error:', error);
+     if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+  Alert.alert('No Internet', 'No internet connection, please try again.');
+} else if (error.response?.status === 403) {
+  Alert.alert(
+    'Access Denied 🔒',
+    error.response?.data?.message || 'Your shop access is restricted. Please contact admin.',
+    [{ text: 'OK', style: 'default' }]
+  );
+} else {
+  Alert.alert('Error', 'Failed to submit request. Please try again.');
+}
     } finally {
       setLoading(false);
     }
@@ -181,7 +274,7 @@ export default function RequestSheetScreen({ route, navigation }) {
         <View style={styles.colNote}>
           <Text style={styles.colNoteText}>
             {categoryType === 'beer'
-              ? 'Columns: 625ml Bottle · 500ml Cane · 330ml Cane · 500ml Bottle · 325ml Bottle'
+              ? 'Columns: 625ml Bottle · 500ml Can · 330ml Can · 500ml Bottle'
               : 'Columns: Q (Quarters) · P (Pints) · N (Nips)'}
           </Text>
         </View>
@@ -279,6 +372,7 @@ export default function RequestSheetScreen({ route, navigation }) {
                         placeholderTextColor={APP_COLORS.textHint}
                         value={stockData[bi]?.[ci]?.present || ''}
                         onChangeText={(v) => updateValue(bi, ci, 'present', v)}
+                        onBlur={() => handleBlurValidation(bi, ci, 'present', stockData[bi]?.[ci]?.present)}
                         maxLength={4}
                       />
                     </View>
@@ -300,6 +394,7 @@ export default function RequestSheetScreen({ route, navigation }) {
                         placeholderTextColor={APP_COLORS.textHint}
                         value={stockData[bi]?.[ci]?.request || ''}
                         onChangeText={(v) => updateValue(bi, ci, 'request', v)}
+                        onBlur={() => handleBlurValidation(bi, ci, 'request', stockData[bi]?.[ci]?.request)}
                         maxLength={4}
                       />
                     </View>
