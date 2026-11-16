@@ -63,11 +63,9 @@ const getQPNMultiples = (brandName, categoryName) => {
   if (cat.includes('rockland') || cat.includes('idl')) {
     return [12, 24, 25];
   }
-  // UG (default QPN)
-  const isSpecialNBrand = UG_N25_BRANDS.includes(name);
-  return [12, 24, isSpecialNBrand ? 25 : 48];
+   // UG (default QPN)
+  return [12, 24, 48];
 };
-
 // ── Validate that a value is a valid multiple ─────────────────────────────────
 const isValidMultiple = (value, multiple) => {
   const num = parseInt(value, 10);
